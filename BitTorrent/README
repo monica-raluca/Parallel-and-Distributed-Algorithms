@@ -1,0 +1,56 @@
+#### Birladeanu Raluca-Monica 335CA
+
+# Structures used
+## Structures sent with MPI
+### fileInfo -> used in the initialize phase, to send the information about the files owned to the tracker and to receive the ack back
+- name - the name of the file
+- segments - the total number of segments
+- hashes - the hashes of the file
+- users - the list of all users owning part of the file (seed/peer). The user uses this to send its rank and the tracker will use this list to keep track of the seed/peer of the specific file
+- ack - a boolean that signifies if the user can start sending requests to download the desired files
+
+### searchedFile -> used in the comunication between peer and peer/seed, in order to request a certain segment of a file
+- name - the name of the file
+- searchedSegment - the number of the segment. The segments are downloaded in order
+
+### wantedFileInfo -> used in the comunication between peer and tracker, in order to request the list of seed/peer, the total segments and the hashes of the desired file
+- users - the list of seed/peer
+- hashes - the hashes of the file
+- totalSegments - the total number of segments
+
+These structures are sent through MPI so we use the custom MPI datatypes: MPI_fileData, MPI_searchedFile,MPI_wantedFileInfo that are defined at the beginning of the program.
+
+## Other structures and variables used
+### userFile -> a structure used to store the information about the files the user wants/has
+- name - the name of the file
+- totalSegments - the total number of segments (if the user has the file, it is set to the proper value in the initialize phase; if he doesn't have it, it is initially set as 1)
+- downloadedSegments - the downloaded segments (if the user has the file, it is set to the total segments in the initialize phase; if he doesn't have it, it is initially set as 0)
+- hashes - the hashes of the file, either set in the initialization period for owned files or set when the tracker provides them for searched files
+- wantedFile - a boolean that differentiates between owned files from the start (false) and the files the user wants to download (true)
+
+### files -> the map between a string (the name of the file) and a fileInfo structure that the tracker uses to keep track of all the files and their information
+
+### acquiredFiles -> the map between a string (the name of the file) and a userFile structure that the user uses to keep track of the owned and wanted files
+
+### wantedNumber -> the number of files a user wants to download
+
+### clientsDone -> the number of clients that finished downloading all the files
+
+# Program Flow
+- In the initialization phase:
+    - the peers send the information about the files that they own to the tracker and add each file in their list of acquired files, marking all segments as downloaded, but the file as not wanted
+    - the tracker receives the data from the peers and adds the data into his own map with all the files. When everyone finished sending their files, the tracker lets the peers know they can start searching for the desired files
+- In the download phase:
+    - the peers go through all the files and if they don't have all segments for a certain one, they first send a request to the tracker to get the file information and the seed/peer list for it. They update the information about the specific file with the data received from the tracker and they begin asking for the searched segment. 
+    - a Round Robin approach has been implemented in order to have an equal distribution of requests among peers - the peer first asks the first user from the seed/peer list, then goes to to ask the next one for the next segment. If the list of seed/peer doesn't have any more new users, it will ask the first peer again and then keep cycling to the next one until it resets the counter again.
+    - if the peer gets a true ack then he goes to the next segment, otherwise he just asks for the segment from the next peer
+    - the tracker is contacted every 10 downloaded segments and the list of seed/peer is then refreshed
+    - when the peer finishes downloading a file, it sends a message to the tracker saying he is done with that file and writes the hashes to the appropriate file
+    - when the peer finishes downloading all the files, he sends a message to the tracker and closes the download thread, but keeps the upload thread open
+    - when the tracker gets a request for a file, he sends the solicited information to the peer and marks him in the peer/seed list if he is not already there
+    - when the tracker gets a message that says a user completed a certain file, he adds it in the seed/peer list if he is not already there. Although this message was not really necessary and I debated quite a lot if I should keep it or not, I decided to keep it there for a more accurate representation of the protocol
+    - when the tracker gets a message that says a user completed all the files, he increments the amount of clients that are done. If all clients are finished with their download, he sends a message to every one of them telling them to close the communication threads and closes itself afterward
+- In the upload phase:
+    - the peer listens for messages
+        - if he gets a message from a peer, he searches for the file he was requested and checks if he has the desired segment (since all the peers download sequentially, it is enough to check if the peer downloaded at least up until the requested segment). If he has that segment, he sends an ack with the true value, otherwise he sends a false value
+        - if he gets a message from the tracker, he closes the upload thread since he now knows all the files were successfully downloaded
