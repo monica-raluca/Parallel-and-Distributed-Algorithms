@@ -1,0 +1,48 @@
+#### Birladeanu Raluca-Monica 335CA
+
+### ThreadData structure
+The structure used for thread data contains all the data needed by the threads, that will then be modified in the thread function.
+### Program Flow
+- We first start by testing out if we get the correct number of arguments. If we don't, we print an error message. 
+- After we check the arguements, we get:
+    - the number of mappers
+    - the number of reducers
+    - the input file
+- From the input file, we read the number of files and then we add the file names and the file index to the file queue. This is the queue that the mappers will take their tasks from.
+- After all the files have been added to the queue, the threads are created, which will execute the given thread function.
+- After that, we join the threads.
+
+### Thread function
+- First we extract the data from the structure.
+- The function will behave differently, depending on the type of the thread accessing it (f the threadID indicates a mapper, or if it indicates a reducer).
+- If the thread is a mapper:
+    - the mappers will take tasks from the file queue 
+        - the file queue contains a pair between the file name and its file index
+        - this is a critical section, so we will first lock the mutex
+    - after the mapper acquired a task, it will process that file
+        - the processing of the file includes iterating through the file and modifying each word so that it only has lowercase letters
+        - each word is then added to a map that associates the word with the index of the file it was found in
+        - after the processing is done, the mapper will return the resulted map
+    - after the file is fully processed, we will lock the mutex again and add the resulted map to a queue that the reducer will take tasks from
+- The reducers will wait for the mappers to finish their job before starting their own tasks, so this is why a barrier is used
+- If the thread is a reducer: 
+    - the reducers will take tasks from the queue that was previously made by the mappers
+        - this is a critical section, so we first lock the mutex
+    - after the reducer acquired a task, it adds the words to a partial map of its own
+        - the partial map associates a word with the list of the indices of the files it was found it
+        - the reducer iterates through the map
+            - if the word is found, the index of the file is appended to the vector of indices
+            - if the word is not found, a new entry is created
+    - after the reducer finishes creating the partial map, we lock the mutex and add the elements from the partial map to the final reducer output
+        - the reducer output is the final map containing all the words, each of them associated with the indices of the files they were found in
+    - we wait for the reducers to finish creating the final map using a reducer barrier
+    - after that, another map is created with the grouped words
+        - the grouped words map associates the starting character of the word with a list of pairs containing the word and the indices of the file it was found in
+    - we wait for the full creation of the map using a barrier
+    - the reducers then sort the words in each group
+        - each reducer will sort a bucket starting with a certain letter, until all the buckets were sorted
+        - the reducers sort both the indices of the files and the words themselves
+            - the words are sorted based on the size of the index list; in case of equality, the words are sorted alphabetically
+    - we wait for the reducers to finish sorting using a barrier
+    - after obtaining the sorted result, the reducers write the output to the files
+        - each reducer will write to a file starting with a certain letter, until all files were written to
